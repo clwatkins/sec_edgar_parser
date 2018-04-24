@@ -281,10 +281,10 @@ def clear_parsed_files():
     EDGAR_DB.make_session()
 
     parsed_excel_paths = EDGAR_DB.session.query(
-        distinct(FilingInfo.excel_path)).filter(FilingInfo.parsed_data == True).all()
+        distinct(FilingInfo)).filter(FilingInfo.parsed_data == True).all()
 
     for parsed_excel in parsed_excel_paths:
-        os.remove(parsed_excel)
+        os.remove(parsed_excel.excel_path)
 
     EDGAR_DB.close_session()
 

@@ -3,7 +3,7 @@ import dateutil.parser
 import re
 from numpy import nan
 
-from config import *
+from .config import *
 
 
 def normalize_file_path(file_from_root):

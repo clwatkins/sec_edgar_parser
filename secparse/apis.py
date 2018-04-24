@@ -4,8 +4,8 @@ import bs4
 import json
 from typing import Union, List, Optional, Tuple
 
-from config import *
-from db import CompanyInfo
+from .config import *
+from .db import CompanyInfo
 
 
 def api_tickers_in_industry(industry_id: Union[str, int]) -> Union[bool, List[Tuple[Optional[str], Optional[str]]]]:

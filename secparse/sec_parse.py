@@ -13,9 +13,9 @@ import requests as rq
 import pandas as pd
 import click
 
-from apis import api_cik_to_name, api_ticker_info, api_name_to_ticker
-from db import EdgarDatabase, FilingInfo, CompanyInfo
-from utilities import *
+from .apis import api_cik_to_name, api_ticker_info, api_name_to_ticker
+from .db import EdgarDatabase, FilingInfo, CompanyInfo
+from .utilities import *
 
 
 EDGAR_DB = EdgarDatabase()

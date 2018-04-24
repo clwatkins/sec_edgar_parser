@@ -18,7 +18,6 @@ setup(
         'pandas',
         'numpy',
         'sqlalchemy',
-        'dateutil'
     ],
     entry_points={'console_scripts': ['secparse=secparse.sec_parse:cli'],},
 )

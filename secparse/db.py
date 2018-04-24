@@ -9,7 +9,7 @@ import dateutil.parser
 import sys
 from typing import List
 
-from config import *
+from .config import *
 
 Base = declarative_base()
 

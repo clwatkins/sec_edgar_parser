@@ -12,11 +12,13 @@ setup(
         'Click',
         'python-dateutil',
         'requests',
+        'beautifulsoup4',
         'requests_oauthlib',
         'feedparser',
-        'xlwings',
         'pandas',
         'numpy',
+        'sqlalchemy',
+        'dateutil'
     ],
-    entry_points={'console_scripts': ['secparse=secparse.main:cli'],},
+    entry_points={'console_scripts': ['secparse=secparse.sec_parse:cli'],},
 )

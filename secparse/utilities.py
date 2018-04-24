@@ -36,8 +36,9 @@ def flatten(deep_list):
 
 
 def scale_array_val(val, scale_val):
+    """Helper func to scale values given some unit multiplier -- returns nan if unsuccessful"""
     try:
-        return float(str(val).replace(',', '').replace(' ',''))*scale_val
+        return float(str(val).replace(',', '').replace(' ', ''))*scale_val
     except (ValueError, IndexError):
         if val == '':
             return nan
@@ -48,10 +49,6 @@ def scale_array_val(val, scale_val):
 def user_list(list_to_split=None, user_prompt='Enter a list of values: '):
     """
     Build a list from user input separated by commas.
-
-    :param list_to_split: optional prepared string or list to split
-    :param user_prompt: string
-    :return: List of strings parsed to leave only alphanumerics + spaces, stripped
     """
     print('\n')
     if list_to_split is not None:

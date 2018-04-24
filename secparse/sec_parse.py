@@ -1,16 +1,13 @@
-"""
-THIS VERSION: early command line tool
-"""
-
 import sys
 import platform
 import time
 import threading
 import os
-from typing import List, Union
-
-from sqlalchemy import distinct
 import multiprocessing
+from typing import List, Union, Optional
+
+from numpy import ndarray
+from sqlalchemy import distinct
 import feedparser
 import requests as rq
 import pandas as pd
@@ -27,16 +24,16 @@ EDGAR_DB = EdgarDatabase()
 # Click helper function for command line interface
 @click.group()
 def cli():
-    """Command line tool for parsing accounting terms pulled from filings on the SEC's Edgar database.\n"""
+    """Basic command line tool for parsing accounting terms pulled from filings on the SEC's Edgar website.\n"""
     make_folders()
 
 
 @cli.command()
 @click.option('--manual', default=False, is_flag=True, help='Download filing data for a specific month.')
-@click.option('--get_company_info', default=True, is_flag=True, help='Attempt to find additional information about companies that have filed')
+@click.option('--get_company_info', default=True, is_flag=True, help='Attempt to find additional information about companies that have filed.')
 def update_filings(manual, get_company_info, print_data=True, bisection_search=True, db_write=True, update_timeframe=10):
     """
-    Pulls filing information from the SEC Edgar site, stores metadata locally.
+    Pulls filing information from Edgar, storing metadata locally, as well as pointers to Excel files containing filing financials.
     """
 
     # Allows user to specify month to get data from
@@ -52,7 +49,7 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
         year = dt.datetime.now().year
         month = dt.datetime.now().month
 
-    # use bisection search to cut down the number of entries passed to the database for writing -- big performance gains
+    # use bisection search to cut down the number of entries passed to the database for writing
     if bisection_search:
 
         # suppress printing results until we've cut the number of filings to display
@@ -66,7 +63,6 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
         margin_error = dt.timedelta(hours=12)
         min_i = 0
 
-        # don't let the algorithm guess anything belong max index value of the filings data
         max_i = len(rss_data)
 
         date_to_find = dt.datetime.now() - dt.timedelta(days=update_timeframe)
@@ -74,7 +70,6 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
         guess_date = dt.datetime.strptime(rss_data[guess_i]['edgar_acceptancedatetime'], '%Y%m%d%H%M%S')
         loop_num = 0
 
-        # uses bisection search algorithm to quickly find correct index
         while abs(date_to_find - guess_date) >= margin_error and loop_num <= 20:
             guess_date = dt.datetime.strptime(rss_data[guess_i]['edgar_acceptancedatetime'], '%Y%m%d%H%M%S')
 
@@ -89,7 +84,6 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
         # cuts rss_data list to include only those filings that are more recent than date_to_find
         rss_data = rss_data[:guess_i]
 
-        # print results on screen
         if print_data:
             print(f'\n{len(rss_data)} filings submitted since '
                   f'{dt.datetime.strftime(date_to_find, "%Y-%m-%d %H:%M:%S")}:')
@@ -113,7 +107,6 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
     else:
         rss_data = _download_filings(year, month, print_data)
 
-    # update database with new filings
     if db_write:
         _update_filings(rss_data, get_company_info)
     else:
@@ -124,8 +117,8 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
 @click.option('--search_type', type=click.Choice(['ticker', 'cik', 'all', 'exchange', 'industry', 'sector', 'name']),
               default='all', help='Category of search term(s). List of possible industry/sector values '
                                   'can be found at:\nhttps://biz.yahoo.com/ic/ind_index.html')
-@click.option('--print_results/--no_print_results', default=True, help="Display search results")
-def search_filings(search_type, print_results):
+def search_filings(search_type, print_results=True):
+    """Displays filing information stored for any companies matching the search criteria."""
     _searcher(search_type, print_results)
 
 
@@ -136,8 +129,8 @@ def search_filings(search_type, print_results):
 @click.option('--csv/--no-csv', default=False, help='Save all parsed data to CSV file.')
 def parse_filings(search_type, csv=False):
     """
-    Attempts to extract accounting information from filings, returns a Pandas DF with all accounting
-    terms found for given companies/categories of companies.
+    Attempts to download, extract and store accounting data (P&L / BS) from filings for given companies / categories of
+    companies within search parameters. Optionally writes all parsed data to a CSV file.
     """
 
     search_results = _searcher(search_type, print_results=False)
@@ -272,7 +265,7 @@ def parse_filings(search_type, csv=False):
 
 @cli.command()
 def update_company_info():
-    """Tries to download information for all company CIKs without a Ticker."""
+    """Attempts to download information for all company CIKs without an associated ticker."""
     EDGAR_DB.make_session()
 
     to_update_ciks = EDGAR_DB.session.query(
@@ -284,16 +277,16 @@ def update_company_info():
 
 @cli.command()
 def clear_parsed_files():
-    """Deletes any Excel files that have been successfully parsed."""
+    """Deletes any downloaded Excel files that have been successfully parsed."""
     EDGAR_DB.make_session()
 
     parsed_excel_paths = EDGAR_DB.session.query(
         distinct(FilingInfo.excel_path)).filter(FilingInfo.parsed_data == True).all()
 
-    EDGAR_DB.close_session()
+    for parsed_excel in parsed_excel_paths:
+        os.remove(parsed_excel)
 
-    for excel_file in parsed_excel_paths:
-        os.remove(excel_file)
+    EDGAR_DB.close_session()
 
     print(f'{len(parsed_excel_paths)} files deleted.')
 
@@ -407,7 +400,7 @@ def _download_xlsxs(filings):
     EDGAR_DB.close_session()
 
 
-def _build_filing_dfs(file_path, re_search_terms) -> Union[None, List[pd.DataFrame]]:
+def _build_filing_dfs(file_path: str, re_search_terms: str) -> Union[None, List[pd.DataFrame]]:
     if not file_path:
         return None
 
@@ -434,7 +427,7 @@ def _build_filing_dfs(file_path, re_search_terms) -> Union[None, List[pd.DataFra
     return return_dfs
 
 
-def _clean_data_file(df, re_search_filing_type, re_search_period):
+def _clean_data_file(df: pd.DataFrame, re_search_filing_type: str, re_search_period: str) -> Optional[ndarray]:
     if type(df) is None:
         return None
 
@@ -492,9 +485,7 @@ def _get_single_company_info(company_cik):
 
 def _update_filings(rss_data, get_company_info):
     """
-    :param rss_data: list of dictionaries returned by dl_filings function.
-    Will throw exceptions for all fields except filing period if key isn't found.
-    :return: True
+    Parse and store filing data defined by Edgar's filing feed (via a parsed XML file)
     """
     print('\nUpdating filings...')
 
@@ -547,6 +538,7 @@ def _update_filings(rss_data, get_company_info):
 
 
 def _update_company_info(company_ciks_to_download):
+    """Attempt to download info about a given company's CIK"""
     print('\n')
     print('Updating company info...')
 

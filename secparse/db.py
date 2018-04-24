@@ -61,6 +61,8 @@ class EdgarDatabase(object):
         Base.metadata.create_all(self._db_eng)
 
     def make_session(self):
+        """Removing from __init__ lets us instantiate an EdgarDatabase object at the module level, dynamically
+        create and close sessions once DB engine has been bound to the sessionmaker"""
         self.session = self._sessionmaker(expire_on_commit=False)
 
     def close_session(self):
@@ -94,7 +96,8 @@ class EdgarDatabase(object):
         return self.session.query(FilingData.filing_accession == accession_num).all()
 
     def select_filings_by_ciks(self, cik_nums) -> List[FilingInfo]:
-        return self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).filter(CompanyInfo.company_cik.in_(cik_nums)).all()
+        return self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).filter(
+            CompanyInfo.company_cik.in_(cik_nums)).all()
 
     def select_all_distinct_ciks(self):
         return self.session.query(CompanyInfo.company_cik).all()
@@ -141,17 +144,13 @@ class EdgarDatabase(object):
             try:
                 clean_date_str = date_str.replace('USD ($)', '')
             except AttributeError:
-                # print("\n")
-                # print(data)
-                # print(date_str)
                 return False
             return clean_date_str
 
-        # find number of columns in central data range by testing numpy array shape
         num_columns = data.shape[1]
 
         for column_num in range(1, num_columns):
-            # find the time period the data refers to (this is usually cell B1 & C1 for balance sheets)
+            # find the time period the data refers to (this is usually cell B1 & C1)
             try:
                 prepped_date = prep_date(data[0, column_num])
 
@@ -160,10 +159,6 @@ class EdgarDatabase(object):
                 else:
                     return False
             except (TypeError, ValueError, IndexError):
-                # print("\n")
-                # print(prepped_date)
-                # print(data)
-                # print(filing.FilingInfo.excel_path)
                 self.session.rollback()  # rollback the session so no partially-written data is preserved
                 return False
 

@@ -2,15 +2,17 @@ import requests
 import re
 import bs4
 import json
+from typing import Union, List, Optional, Tuple
 
 from config import *
+from db import CompanyInfo
 
 
-def api_tickers_in_industry(industry_id):
+def api_tickers_in_industry(industry_id: Union[str, int]) -> Union[bool, List[Tuple[Optional[str], Optional[str]]]]:
     """Queries Yahoo Finance API to return list of stock tickers in industry"""
 
     url = "http://query.yahooapis.com/v1/public/yql"
-    params = {'q': 'select * from yahoo.finance.industry where id={}'.format(industry_id), 'format': 'json',
+    params = {'q': f'select * from yahoo.finance.industry where id={industry_id}', 'format': 'json',
               'env': 'store://datatables.org/alltableswithkeys'}
 
     r = requests.get(url, params=params, auth=AUTH)
@@ -35,7 +37,7 @@ def api_tickers_in_industry(industry_id):
         return [(None, None)]
 
 
-def api_get_cik(ticker):
+def api_get_cik(ticker: str) -> Optional[str]:
     """Poll Edgar site for CIK number given a ticker"""
 
     # extract cik number from page using regex query
@@ -51,22 +53,19 @@ def api_get_cik(ticker):
         return None
 
 
-def api_cik_to_name(company_info):
+def api_cik_to_name(company_info: CompanyInfo):
     """Queries SEC then Yahoo API to return the stock symbol for a given CIK num"""
 
-    # extract cik number from page using beautiful soup
     url = f'http://www.sec.gov/cgi-bin/browse-edgar?CIK={company_info.company_cik}&Find=Search&' \
           f'owner=exclude&action=getcompany'
     sec_page = requests.get(url).text
 
-    # find company name with 'companyName' class found on SEC pages
     try:
         company_name_string = bs4.BeautifulSoup(sec_page, 'html.parser').find_all('', class_='companyName')[0].text
     except IndexError:
         print(url)
         return company_info
 
-    # split string to isolate company name, format to remove any non-alpha characters, replace any double spaces
     company_info.company_name = re.sub("[^a-zA-Z ]+", "", company_name_string[:company_name_string.find(' CIK')])\
         .replace("  ", " ").title()
 
@@ -89,13 +88,12 @@ def api_name_to_ticker(company_info):
     try:
         company_info.company_ticker = r.json()['ResultSet']['Result'][0]['symbol']
         return company_info
-    except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError):
+    except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError):
         try:
             # try other api to see if we get a hit
             r2 = requests.get(f'http://chstocksearch.herokuapp.com/api/{company_info.company_name}')
             return r2.json()[0]['symbol']
-        # if all else fails, return False
-        except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError):
+        except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError):
             return company_info
 
 
@@ -108,7 +106,6 @@ def api_industry_ids_names():
 
     industry_directory = {}
 
-    # find list of industries by parsing page links for '/industryindex/', then grabbing industry index and title
     for link in industries_page.find_all('a'):
 
         if repr(link).find('/industryindex/') > 0:
@@ -134,7 +131,7 @@ def api_ticker_info(company_info):
     try:
         r = requests.get(url, params=params, auth=AUTH)
         api_return = r.json()
-    except (json.JSONDecodeError, requests.ConnectionError, requests.ConnectTimeout):
+    except (json.JSONDecodeError, ConnectionError, TimeoutError):
         return company_info
 
     try:

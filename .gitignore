@@ -73,9 +73,6 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints/
-*.ipynb
-
-.gitignore
 
 # pyenv
 .python-version
@@ -109,5 +106,4 @@ venv.bak/
 .mypy_cache/
 
 archive/
-
 .idea/

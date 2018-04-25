@@ -2,14 +2,14 @@
 
 In the process of development.
 
-- Command-line tool to parse the SEC's Edgar database
+- Command-line tool to parse the [SEC's Edgar database](https://www.sec.gov/edgar/searchedgar/companysearch.html)
 - Aiming to facilitate ML-type analysis on large sets of accounting terms
 
 ## Instructions
 - Download / clone repository
-- Set AUTH and ROOT_DIR global vars in config.py (AUTH keys can be generated from [https://developer.yahoo.com/apps/create/](https://developer.yahoo.com/apps/create/))
-- Run 'pip install [path to top-level sec_edgar_parser directory]' to install command line alias
-- Run 'secparse --help' in termal/cmd prompt
+- Set ROOT_DIR var in `config.py` to define where downloaded files / database will be stored (defaults to user's home directory)
+- Run `pip install {path to top-level sec_edgar_parser directory}` to install command line alias
+- Run `secparse --help` in termal/cmd prompt to see available commands
 
 ## Envisioned workflow
 - Install package and confirm working
@@ -20,4 +20,3 @@ In the process of development.
 ## Current issues
 - Sector / industry information for companies not being parsed
 - Parser only knows limited number of form types with relatively limited fault tolerance for non-standard filing formats
-- Latest version of Excel on OSX will ask for permissions each time parser tries to open XLSX file to grab accounting terms

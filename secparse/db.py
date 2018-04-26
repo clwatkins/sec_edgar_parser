@@ -58,8 +58,6 @@ class FilingData(Base):
     value_period = Column(BigInteger, primary_key=True)
 
 
-
-
 class EdgarDatabase(object):
     def __init__(self):
         self._db_eng = create_engine(f'sqlite:///{DB_FILE_LOC}', echo=False)
@@ -118,14 +116,11 @@ class EdgarDatabase(object):
 
         return [res.company_cik for res in distinct_ciks]
 
-    def select_ciks_by_exchange(self, exchange_name):
-        return self._select_distinct_ciks(CompanyInfo.company_exchange, exchange_name)
+    def select_ciks_by_state(self, state_name):
+        return self._select_distinct_ciks(CompanyInfo.company_state, state_name)
 
-    def select_ciks_by_industry(self, industry_name):
-        return self._select_distinct_ciks(CompanyInfo.company_industry, industry_name)
-
-    def select_ciks_by_sector(self, sector_name):
-        return self._select_distinct_ciks(CompanyInfo.company_sector, sector_name)
+    def select_ciks_by_sic(self, sic_code):
+        return self._select_distinct_ciks(CompanyInfo.company_sic, sic_code)
 
     def select_ciks_by_ticker(self, company_ticker):
         return self._select_distinct_ciks(CompanyInfo.company_ticker, company_ticker)

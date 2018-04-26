@@ -7,7 +7,7 @@ import multiprocessing
 from typing import List, Union, Optional
 
 from numpy import ndarray
-from sqlalchemy import distinct
+from sqlalchemy import distinct, func
 import feedparser
 import requests as rq
 import bs4
@@ -15,7 +15,7 @@ import pandas as pd
 import click
 
 from .apis import api_name_to_ticker, api_cik_to_info
-from .db import EdgarDatabase, FilingInfo, CompanyInfo
+from .db import EdgarDatabase, FilingInfo, CompanyInfo, SicInfo
 from .utilities import *
 
 
@@ -115,9 +115,8 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
         return rss_data
 
 
-# TODO modify search types for new company info
 @cli.command()
-@click.option('--search_type', type=click.Choice(['ticker', 'cik', 'all', 'exchange', 'industry', 'sector', 'name']),
+@click.option('--search_type', type=click.Choice(['ticker', 'cik', 'all', 'sic', 'state', 'name']),
               default='all', help='Category of search term(s). List of possible industry/sector values '
                                   'can be found at:\nhttps://biz.yahoo.com/ic/ind_index.html')
 def search_filings(search_type, print_results=True):
@@ -126,7 +125,7 @@ def search_filings(search_type, print_results=True):
 
 
 @cli.command()
-@click.option('--search_type', type=click.Choice(['ticker', 'all', 'cik', 'exchange', 'industry', 'sector', 'name']),
+@click.option('--search_type', type=click.Choice(['ticker', 'all', 'cik', 'sic', 'state', 'name']),
               default='all', help='Category of search term(s). List of possible industry/sector values can be found '
                                   'at:\nhttps://biz.yahoo.com/ic/ind_index.html')
 @click.option('--csv/--no-csv', default=False, help='Save all parsed data to CSV file.')
@@ -242,15 +241,16 @@ def parse_filings(search_type, csv=False):
 
     print('Unsuccessful parse log written to:', error_log_loc)
 
-    # TODO modify joins to include SIC data
     if csv:
         # generate a DataFrame via SQL query for all parsed values in the data table
+        sic_df = pd.read_sql_table(DB_SIC_TABLE, EDGAR_DB._db_eng)
         company_df = pd.read_sql_table(DB_COMPANY_TABLE, EDGAR_DB._db_eng)
-        filing_info_df = pd.read_sql_table(DB_FILING_TABLE, EDGAR_DB._db_eng, parse_dates={'period':'%Y%m%d', 'filed':'%Y%m%d'})
-        filing_data_df = pd.read_sql_table(DB_FILING_DATA_TABLE, EDGAR_DB._db_eng, parse_dates={'value_period':'%Y%m%d'})
+        filing_info_df = pd.read_sql_table(DB_FILING_TABLE, EDGAR_DB._db_eng, parse_dates={'period': '%Y%m%d', 'filed': '%Y%m%d'})
+        filing_data_df = pd.read_sql_table(DB_FILING_DATA_TABLE, EDGAR_DB._db_eng, parse_dates={'value_period': '%Y%m%d'})
 
-        most_data_df = pd.merge(filing_data_df, filing_info_df, how='left')
-        all_data_df = pd.merge(most_data_df, company_df, how='left')
+        little_data_df = pd.merge(filing_data_df, filing_info_df, how='left')
+        some_data_df = pd.merge(little_data_df, company_df, how='left')
+        all_data_df = pd.merge(some_data_df, sic_df, how='left')
 
         print('\n')
         print(all_data_df.head())
@@ -305,12 +305,10 @@ def _searcher(search_type, print_results=True):
         search_term = click.prompt('Please enter search term')
 
         # each of these generates a set of cik numbers for companies that meet search criteria
-        if search_type == 'exchange':
-            ciks_to_parse = EDGAR_DB.select_ciks_by_exchange(search_term)
-        elif search_type == 'industry':
-            ciks_to_parse = EDGAR_DB.select_ciks_by_industry(search_term)
-        elif search_type == 'sector':
-            ciks_to_parse = EDGAR_DB.select_ciks_by_sector(search_term)
+        if search_type == 'sic':
+            ciks_to_parse = EDGAR_DB.select_ciks_by_sic(search_term)
+        elif search_type == 'state':
+            ciks_to_parse = EDGAR_DB.select_ciks_by_state(search_term)
         elif search_type == 'name':
             ciks_to_parse = EDGAR_DB.select_ciks_by_name(search_term)
         elif search_type == 'cik':
@@ -470,7 +468,7 @@ def _clean_data_file(df: pd.DataFrame, re_search_filing_type: str, re_search_per
 
 
 def _get_single_company_info(company_cik):
-    time.sleep(.05)  # pause for crude rate limiting when hitting in parallel
+    time.sleep(.2)  # pause for crude rate limiting when hitting in parallel
 
     company_info = CompanyInfo()
 
@@ -558,11 +556,8 @@ def _build_sic_table():
 
     EDGAR_DB.make_session()
 
-    try:
-        pd.read_sql_table(DB_SIC_TABLE, EDGAR_DB._db_eng)
-        return
-    except ValueError:  # pandas will throw a valueerror if the table isn't found -- sign we need to create it
-        pass
+    if EDGAR_DB.session.query(func.count(SicInfo.sic_code)).first()[0] != 0:
+        return True
 
     sic_tables = bs4.BeautifulSoup(rq.get('https://www.sec.gov/info/edgar/siccodes.htm').content, 'html.parser')
     sic_table_found = sic_tables.findAll('p')[1].findAll('table')[0]

@@ -22,4 +22,4 @@ VALID_FORMS = ['10-Q', '10-K', '10-Q/A', 'S-4', '8-K']
 DB_FILING_TABLE = 'filing_info'
 DB_FILING_DATA_TABLE = 'filing_data'
 DB_COMPANY_TABLE = 'company_info'
-
+DB_SIC_TABLE = 'sic_info'

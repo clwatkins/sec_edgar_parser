@@ -10,10 +10,11 @@ from numpy import ndarray
 from sqlalchemy import distinct
 import feedparser
 import requests as rq
+import bs4
 import pandas as pd
 import click
 
-from .apis import api_cik_to_name, api_ticker_info, api_name_to_ticker
+from .apis import api_name_to_ticker, api_cik_to_info
 from .db import EdgarDatabase, FilingInfo, CompanyInfo
 from .utilities import *
 
@@ -26,6 +27,7 @@ EDGAR_DB = EdgarDatabase()
 def cli():
     """Basic command line tool for parsing accounting terms pulled from filings on the SEC's Edgar website.\n"""
     make_folders()
+    _build_sic_table()
 
 
 @cli.command()
@@ -113,6 +115,7 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
         return rss_data
 
 
+# TODO modify search types for new company info
 @cli.command()
 @click.option('--search_type', type=click.Choice(['ticker', 'cik', 'all', 'exchange', 'industry', 'sector', 'name']),
               default='all', help='Category of search term(s). List of possible industry/sector values '
@@ -239,6 +242,7 @@ def parse_filings(search_type, csv=False):
 
     print('Unsuccessful parse log written to:', error_log_loc)
 
+    # TODO modify joins to include SIC data
     if csv:
         # generate a DataFrame via SQL query for all parsed values in the data table
         company_df = pd.read_sql_table(DB_COMPANY_TABLE, EDGAR_DB._db_eng)
@@ -466,19 +470,16 @@ def _clean_data_file(df: pd.DataFrame, re_search_filing_type: str, re_search_per
 
 
 def _get_single_company_info(company_cik):
-    time.sleep(.1)  # pause for crude rate limiting when hitting in parallel
+    time.sleep(.05)  # pause for crude rate limiting when hitting in parallel
 
     company_info = CompanyInfo()
 
     company_info.company_cik = company_cik
 
-    company_info = api_cik_to_name(company_info)
+    company_info = api_cik_to_info(company_info)
 
     if company_info.company_name:
         company_info = api_name_to_ticker(company_info)
-
-        if company_info.company_ticker:
-            company_info = api_ticker_info(company_info)
 
     return company_info
 
@@ -551,6 +552,24 @@ def _update_company_info(company_ciks_to_download):
 
     EDGAR_DB.insert_objects(info_to_insert)
     EDGAR_DB.close_session()
+
+
+def _build_sic_table():
+
+    try:
+        pd.read_sql_table(DB_SIC_TABLE, EDGAR_DB._db_eng)
+        return
+    except ValueError:  # pandas will throw a valueerror if the table isn't found -- sign we need to create it
+        pass
+
+    sic_tables = bs4.BeautifulSoup(rq.get('https://www.sec.gov/info/edgar/siccodes.htm').content, 'html.parser')
+    sic_table_found = sic_tables.findAll('p')[1].findAll('table')[0]
+
+    sic_df = pd.read_html(sic_table_found.encode(), header=0)[0]
+    sic_df.columns = ['sic_code', 'ad_office', 'drop', 'industry_title']
+    sic_df = sic_df.drop('drop', axis='columns')
+
+    sic_df.to_sql_table(DB_SIC_TABLE, EDGAR_DB._db_eng)
 
 
 if __name__ == '__main__':

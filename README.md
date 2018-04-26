@@ -18,5 +18,5 @@ In the process of development.
 - Run clear_parsed_files as a utility function to delete Excel documents that have been successfully parsed for their contents
 
 ## Current issues
-- Sector / industry information for companies not being parsed
+- Finish modifying availble search types to include SIC code / industry classification / company location
 - Parser only knows limited number of form types with relatively limited fault tolerance for non-standard filing formats

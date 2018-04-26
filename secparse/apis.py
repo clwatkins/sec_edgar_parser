@@ -2,39 +2,10 @@ import requests
 import re
 import bs4
 import json
-from typing import Union, List, Optional, Tuple
+from typing import Optional
 
 from .config import *
 from .db import CompanyInfo
-
-
-def api_tickers_in_industry(industry_id: Union[str, int]) -> Union[bool, List[Tuple[Optional[str], Optional[str]]]]:
-    """Queries Yahoo Finance API to return list of stock tickers in industry"""
-
-    url = "http://query.yahooapis.com/v1/public/yql"
-    params = {'q': f'select * from yahoo.finance.industry where id={industry_id}', 'format': 'json',
-              'env': 'store://datatables.org/alltableswithkeys'}
-
-    r = requests.get(url, params=params, auth=AUTH)
-
-    # try to parse json -- return list of tuples(industry id, ticker) if successful, tuple of (None, None) otherwise
-    try:
-        r_json = r.json()
-        tickers_in_industry = []
-
-        try:
-            for ticker in r_json['query']['results']['industry']['company']:
-                tickers_in_industry.append((industry_id, ticker['symbol']))
-        except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError):
-            try:
-                tickers_in_industry.append((industry_id, r_json['query']['results']['industry']['company']['symbol']))
-            except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError):
-                return[(None, None)]
-
-        return tickers_in_industry
-
-    except TypeError:
-        return [(None, None)]
 
 
 def api_get_cik(ticker: str) -> Optional[str]:
@@ -53,26 +24,38 @@ def api_get_cik(ticker: str) -> Optional[str]:
         return None
 
 
-def api_cik_to_name(company_info: CompanyInfo):
+def api_cik_to_info(company_info: CompanyInfo) -> CompanyInfo:
     """Queries SEC then Yahoo API to return the stock symbol for a given CIK num"""
 
     url = f'http://www.sec.gov/cgi-bin/browse-edgar?CIK={company_info.company_cik}&Find=Search&' \
           f'owner=exclude&action=getcompany'
     sec_page = requests.get(url).text
 
-    try:
-        company_name_string = bs4.BeautifulSoup(sec_page, 'html.parser').find_all('', class_='companyName')[0].text
-    except IndexError:
-        print(url)
-        return company_info
+    sec_page_parsed = bs4.BeautifulSoup(sec_page, 'html.parser')
 
-    company_info.company_name = re.sub("[^a-zA-Z ]+", "", company_name_string[:company_name_string.find(' CIK')])\
-        .replace("  ", " ").title()
+    try:
+        company_name_string = sec_page_parsed.find_all('', class_='companyName')[0].text
+        company_info.company_name = re.sub("[^a-zA-Z ]+", "", company_name_string[:company_name_string.find(' CIK')]) \
+            .replace("  ", " ").title()
+    except IndexError:
+        pass
+
+    try:
+        company_sic_string = re.findall(r'SIC=....', str(sec_page_parsed.findAll('', class_='identInfo')[0]))[0][-4:]
+        company_info.company_sic = company_sic_string
+    except IndexError:
+        pass
+
+    try:
+        company_state_string = re.findall(r'State=..', str(sec_page_parsed.findAll('', class_='identInfo')[0]))[0][-2:]
+        company_info.company_state = company_state_string
+    except IndexError:
+        pass
 
     return company_info
 
 
-def api_name_to_ticker(company_info):
+def api_name_to_ticker(company_info: CompanyInfo) -> CompanyInfo:
     """Return ticker for given company name. Is relatively successful for specific names"""
 
     url = "http://d.yimg.com/autoc.finance.yahoo.com/autoc"
@@ -95,58 +78,3 @@ def api_name_to_ticker(company_info):
             return r2.json()[0]['symbol']
         except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError):
             return company_info
-
-
-def api_industry_ids_names():
-    """Get list of industry ids by parsing links contained within Yahoo Finance Industry-Sector homepage"""
-
-    url = 'https://biz.yahoo.com/ic/ind_index.html'
-    r = requests.get(url)
-    industries_page = bs4.BeautifulSoup(r.content, 'html.parser')
-
-    industry_directory = {}
-
-    for link in industries_page.find_all('a'):
-
-        if repr(link).find('/industryindex/') > 0:
-            industry_id = repr(link)[repr(link).find('industryindex'):].split('/')[1]
-            industry_name = link.string.replace('\n', ' ')
-            industry_directory[industry_id] = industry_name
-
-    return industry_directory
-
-
-def api_ticker_info(company_info):
-    """Queries Yahoo Finance API to get company information for a list of stock tickers."""
-
-    params = {'q': f"select * from yahoo.finance.quotes where symbol in ('{company_info.company_ticker}')",
-              'format': 'json',
-              'debug': 'false',
-              'env': 'store://datatables.org/alltableswithkeys'}
-    url = "https://query.yahooapis.com/v1/public/yql"
-
-    # stupid amount of JSON parsing code again -- nested exception catching for various errors.
-    # will return tuple of '' values whenever possible rather than raising exception
-    # ideally gets ticker|company name|exchange name|currency
-    try:
-        r = requests.get(url, params=params, auth=AUTH)
-        api_return = r.json()
-    except (json.JSONDecodeError, ConnectionError, TimeoutError):
-        return company_info
-
-    try:
-        company_info.company_ticker = api_return['query']['results']['quote']['symbol']
-
-        # format company name for alpha-only, title case, no double spaces
-        company_info.company_name = re.sub("[^a-zA-Z ]+", "", api_return['query']['results']['quote']['Name'])\
-            .replace("  ", " ").title()
-
-        company_info.company_exchange = api_return['query']['results']['quote']['StockExchange']
-
-        company_info.company_currency = api_return['query']['results']['quote']['Currency']
-
-    except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError):
-        pass
-
-    finally:
-        return company_info

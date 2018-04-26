@@ -20,11 +20,8 @@ class CompanyInfo(Base):
     company_cik = Column(String, primary_key=True)
     company_name = Column(String)
     company_ticker = Column(String)
-    company_industry_id = Column(String)
-    company_industry = Column(String)
-    company_sector = Column(String)
-    company_exchange = Column(String)
-    company_currency = Column(String)
+    company_sic = Column(String)
+    company_state = Column(String)
 
 
 class FilingInfo(Base):
@@ -51,6 +48,14 @@ class FilingData(Base):
     filing_type = Column(String)
     filing_value = Column(Float)
     value_period = Column(BigInteger, primary_key=True)
+
+
+class SICInfo(Base):
+    __tablename__ = DB_SIC_TABLE
+
+    sic_code = Column(String)
+    ad_office = Column(String)
+    industry_title = Column(String)
 
 
 class EdgarDatabase(object):

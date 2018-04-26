@@ -14,13 +14,21 @@ from .config import *
 Base = declarative_base()
 
 
+class SicInfo(Base):
+    __tablename__ = DB_SIC_TABLE
+
+    sic_code = Column(String, primary_key=True)
+    ad_office = Column(String)
+    industry_title = Column(String)
+
+
 class CompanyInfo(Base):
     __tablename__ = DB_COMPANY_TABLE
 
     company_cik = Column(String, primary_key=True)
     company_name = Column(String)
     company_ticker = Column(String)
-    company_sic = Column(String)
+    company_sic = Column(String, ForeignKey(SicInfo.sic_code))
     company_state = Column(String)
 
 
@@ -50,12 +58,6 @@ class FilingData(Base):
     value_period = Column(BigInteger, primary_key=True)
 
 
-class SicInfo(Base):
-    __tablename__ = DB_SIC_TABLE
-
-    sic_code = Column(String, primary_key=True)
-    ad_office = Column(String)
-    industry_title = Column(String)
 
 
 class EdgarDatabase(object):

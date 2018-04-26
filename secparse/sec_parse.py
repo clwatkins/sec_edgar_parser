@@ -556,6 +556,8 @@ def _update_company_info(company_ciks_to_download):
 
 def _build_sic_table():
 
+    EDGAR_DB.make_session()
+
     try:
         pd.read_sql_table(DB_SIC_TABLE, EDGAR_DB._db_eng)
         return
@@ -569,7 +571,9 @@ def _build_sic_table():
     sic_df.columns = ['sic_code', 'ad_office', 'drop', 'industry_title']
     sic_df = sic_df.drop('drop', axis='columns')
 
-    sic_df.to_sql_table(DB_SIC_TABLE, EDGAR_DB._db_eng)
+    sic_df.to_sql(DB_SIC_TABLE, EDGAR_DB._db_eng, if_exists='replace', index=False)
+
+    EDGAR_DB.close_session()  # need to use session logic to commit changes
 
 
 if __name__ == '__main__':

@@ -50,10 +50,10 @@ class FilingData(Base):
     value_period = Column(BigInteger, primary_key=True)
 
 
-class SICInfo(Base):
+class SicInfo(Base):
     __tablename__ = DB_SIC_TABLE
 
-    sic_code = Column(String)
+    sic_code = Column(String, primary_key=True)
     ad_office = Column(String)
     industry_title = Column(String)
 

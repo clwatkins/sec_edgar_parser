@@ -117,8 +117,8 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
 
 @cli.command()
 @click.option('--search_type', type=click.Choice(['ticker', 'cik', 'all', 'sic', 'state', 'name']),
-              default='all', help='Category of search term(s). List of possible industry/sector values '
-                                  'can be found at:\nhttps://biz.yahoo.com/ic/ind_index.html')
+              default='all', help='Category of search term(s). List of possible SIC codes based on industry '
+                                  'classification can be found at:\nhttps://www.sec.gov/info/edgar/siccodes.htm')
 def search_filings(search_type, print_results=True):
     """Displays filing information stored for any companies matching the search criteria."""
     _searcher(search_type, print_results)
@@ -126,8 +126,8 @@ def search_filings(search_type, print_results=True):
 
 @cli.command()
 @click.option('--search_type', type=click.Choice(['ticker', 'all', 'cik', 'sic', 'state', 'name']),
-              default='all', help='Category of search term(s). List of possible industry/sector values can be found '
-                                  'at:\nhttps://biz.yahoo.com/ic/ind_index.html')
+              default='all', help='Category of search term(s). List of possible SIC codes based on industry '
+                                  'classification can be found at:\nhttps://www.sec.gov/info/edgar/siccodes.htm')
 @click.option('--csv/--no-csv', default=False, help='Save all parsed data to CSV file.')
 def parse_filings(search_type, csv=False):
     """

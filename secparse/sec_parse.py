@@ -1,15 +1,15 @@
 import sys
 import platform
 import time
-import threading
 import os
 import multiprocessing
 from typing import List, Union, Optional
 
 from numpy import ndarray
-from sqlalchemy import distinct, func
+from sqlalchemy import distinct, func, and_
 import feedparser
 import requests as rq
+from xlrd.biffh import XLRDError
 import bs4
 import pandas as pd
 import click
@@ -19,23 +19,27 @@ from .db import EdgarDatabase, FilingInfo, CompanyInfo, SicInfo
 from .utilities import *
 
 
-EDGAR_DB = EdgarDatabase()
-
-
 # Click helper function for command line interface
 @click.group()
 def cli():
     """Basic command line tool for parsing accounting terms pulled from filings on the SEC's Edgar website.\n"""
+    if sys.version_info[0] + sys.version_info[1]/10 < 3.6:
+        raise Exception("Python 3.6 or a more recent version is required.")
+
     make_folders()
     _build_sic_table()
+    print("\n")
 
 
 @cli.command()
 @click.option('--manual', default=False, is_flag=True, help='Download filing data for a specific month.')
-@click.option('--get_company_info', default=True, is_flag=True, help='Attempt to find additional information about companies that have filed.')
-def update_filings(manual, get_company_info, print_data=True, bisection_search=True, db_write=True, update_timeframe=10):
+@click.option('--get_company_info', default=True, is_flag=True, help='Attempt to find additional information '
+                                                                     'about companies that have filed.')
+def update_filings(manual, get_company_info, print_data=True, bisection_search=True,
+                   db_write=True, update_timeframe=10):
     """
-    Pulls filing information from Edgar, storing metadata locally, as well as pointers to Excel files containing filing financials.
+    Pulls filing information from Edgar, storing metadata locally, as well as pointers to
+    Excel files containing filing financials.
     """
 
     # Allows user to specify month to get data from
@@ -121,7 +125,13 @@ def update_filings(manual, get_company_info, print_data=True, bisection_search=T
                                   'classification can be found at:\nhttps://www.sec.gov/info/edgar/siccodes.htm')
 def search_filings(search_type, print_results=True):
     """Displays filing information stored for any companies matching the search criteria."""
-    _searcher(search_type, print_results)
+
+    edgar_db = EdgarDatabase()
+    edgar_db.make_session()
+
+    _searcher(search_type, edgar_db, print_results)
+
+    edgar_db.close_session()
 
 
 @cli.command()
@@ -135,7 +145,10 @@ def parse_filings(search_type, csv=False):
     companies within search parameters. Optionally writes all parsed data to a CSV file.
     """
 
-    search_results = _searcher(search_type, print_results=False)
+    edgar_db = EdgarDatabase()
+    edgar_db.make_session()
+
+    search_results = _searcher(search_type, edgar_db, print_results=False)
     print('\n')
 
     filings_to_download = []
@@ -150,8 +163,7 @@ def parse_filings(search_type, csv=False):
 
         valid_results += 1
 
-        if filing.FilingInfo.parsed_data:
-            parsing_successes += 1
+        if filing.FilingInfo.parsing_attempted:
             continue
 
         filings_to_parse.append(filing)
@@ -164,45 +176,49 @@ def parse_filings(search_type, csv=False):
     if filings_to_download:
         print('\n')
         print('Downloading {} filings...'.format(len(filings_to_download)))
-        chunk_size = len(filings_to_download)//MULTITHREADING_NUMBER
 
-        if chunk_size > 0:
-            xlsx_download_chunks = [filings_to_download[i:i + chunk_size] for i in
-                                    range(0, len(filings_to_download), chunk_size)]
-            for i in range(0, MULTITHREADING_NUMBER):
-                threading.Thread(target=_download_xlsxs(xlsx_download_chunks[i])).start()
+        if len(filings_to_download) > 20:  # multiprocess this if there are a significant number of filings to dl
+            filing_download_pool = multiprocessing.Pool(processes=MULTIPROCESSING_NUMBER)
+            filings_to_record = filing_download_pool.map(_download_xlsxs, filings_to_download)
+            filing_download_pool.close()
+            filings_to_record = flatten(filings_to_record)
         else:
-            _download_xlsxs(filings_to_download)
+            filings_to_record = _download_xlsxs(filings_to_download)
 
-        EDGAR_DB.make_session()
+        for f in filings_to_record:
+            for r in edgar_db.session.query(FilingInfo).filter(FilingInfo.excel_url == f[1]).all():
+                r.excel_path = f[0]
 
-        # inefficient to separate from download logic, but prevents threading issues with sqlite + multiple sessions
-        for filing in filings_to_download:
-            excel_write_path = normalize_file_path('xlsx_data/' + filing.FilingInfo.company_cik + '_' +
-                                    filing.FilingInfo.filing_accession + '.xlsx')
+    edgar_db.session.commit()
 
-            EDGAR_DB.update_excel_path(excel_write_path, filing.FilingInfo.filing_url)
-            filing.FilingInfo.excel_path = str(excel_write_path)
-
+    print('\n')
     print('Download complete.')
     print('\n')
+
+    # reload filing objects from database as Excel write paths have been updated
+    filings_to_parse = edgar_db.select_filings_by_accessions([f.FilingInfo.filing_accession for f in filings_to_parse])
 
     parsing_errors = []
     with click.progressbar(label=f'Parsing {len(filings_to_parse)} filings...', length=len(filings_to_parse)) as bar:
 
         for filing in filings_to_parse:
 
-            if filing.FilingInfo.excel_path:
-                new_filing_bs_dfs = _build_filing_dfs(
-                    filing.FilingInfo.excel_path,
-                    re_search_terms=r'\bcond.*?\bconsol.*?\bbalance|\bbalance.*?\bsheet'
-                )
+            if not filing.FilingInfo.excel_path:
+                continue
 
-                new_filing_pl_dfs = _build_filing_dfs(
-                    filing.FilingInfo.excel_path,
-                    re_search_terms=r'\bstate.*?\bope|\bcond.*?\bconso'
-                )
+            new_filing_bs_dfs = _build_filing_dfs(
+                filing.FilingInfo.excel_path,
+                re_search_terms=r'\bcond.*?\bconsol.*?\bbalance|\bbalance.*?\bsheet'
+            )
 
+            new_filing_pl_dfs = _build_filing_dfs(
+                filing.FilingInfo.excel_path,
+                re_search_terms=r'\boper|\bcond.*?\bconso'
+            )
+
+            if not new_filing_bs_dfs:
+                pass
+            else:
                 for filing_bs_df in new_filing_bs_dfs:
                     clean_filing_bs_data = _clean_data_file(filing_bs_df, r'\bbalance.*?\bsheet', r'.?')
 
@@ -210,18 +226,21 @@ def parse_filings(search_type, csv=False):
                     if clean_filing_bs_data is None:
                         parsing_errors.append('BS: ' + str(filing.FilingInfo.excel_path))
                     else:
-                        EDGAR_DB.set_filing_data(filing, clean_filing_bs_data, filing_type='BS')
+                        edgar_db.set_filing_data(filing, clean_filing_bs_data, filing_type='BS')
                         parsing_successes += 1
 
+            if not new_filing_pl_dfs:
+                pass
+            else:
                 for filing_pl_df in new_filing_pl_dfs:
-                    clean_filing_pl_data = _clean_data_file(filing_pl_df, r'operations', '12 months')
+                    clean_filing_pl_data = _clean_data_file(filing_pl_df, r'\boperatio|\brevenue', '12 months')
 
                     # write filing data to db if parsing returns something
                     if clean_filing_pl_data is None:
                         parsing_errors.append('PL: ' + str(filing.FilingInfo.excel_path))
                         continue
 
-                    if EDGAR_DB.set_filing_data(filing, clean_filing_pl_data, filing_type='PL') is not False:
+                    if edgar_db.set_filing_data(filing, clean_filing_pl_data, filing_type='PL') is not False:
                         parsing_successes += 1
                     else:
                         parsing_errors.append('PL: ' + str(filing.FilingInfo.excel_path))
@@ -234,6 +253,10 @@ def parse_filings(search_type, csv=False):
     print('Successful sheet parses:', parsing_successes)
     print('Unsuccessful sheet parses:', len(parsing_errors))
 
+    for c in edgar_db.session.query(FilingInfo).filter(
+            FilingInfo.filing_url.in_([f.FilingInfo.filing_url for f in filings_to_parse])).all():
+        c.parsing_attempted = True
+
     error_log_loc = normalize_file_path('unsuccessful_parses.txt')
 
     with open(error_log_loc, 'w') as f:
@@ -243,14 +266,16 @@ def parse_filings(search_type, csv=False):
 
     if csv:
         # generate a DataFrame via SQL query for all parsed values in the data table
-        sic_df = pd.read_sql_table(DB_SIC_TABLE, EDGAR_DB._db_eng)
-        company_df = pd.read_sql_table(DB_COMPANY_TABLE, EDGAR_DB._db_eng)
-        filing_info_df = pd.read_sql_table(DB_FILING_TABLE, EDGAR_DB._db_eng, parse_dates={'period': '%Y%m%d', 'filed': '%Y%m%d'})
-        filing_data_df = pd.read_sql_table(DB_FILING_DATA_TABLE, EDGAR_DB._db_eng, parse_dates={'value_period': '%Y%m%d'})
+        sic_df = pd.read_sql_table(DB_SIC_TABLE, edgar_db.db_eng)
+        company_df = pd.read_sql_table(DB_COMPANY_TABLE, edgar_db.db_eng)
+        filing_info_df = pd.read_sql_table(DB_FILING_TABLE, edgar_db.db_eng,
+                                           parse_dates={'period': '%Y%m%d', 'filed': '%Y%m%d'})
+        filing_data_df = pd.read_sql_table(DB_FILING_DATA_TABLE, edgar_db.db_eng,
+                                           parse_dates={'value_period': '%Y%m%d'})
 
         little_data_df = pd.merge(filing_data_df, filing_info_df, how='left')
         some_data_df = pd.merge(little_data_df, company_df, how='left')
-        all_data_df = pd.merge(some_data_df, sic_df, how='left')
+        all_data_df = pd.merge(some_data_df, sic_df, how='left', left_on='company_sic', right_on='sic_code')
 
         print('\n')
         print(all_data_df.head())
@@ -263,61 +288,72 @@ def parse_filings(search_type, csv=False):
         print('\nParsed data CSV written to:')
         print(csv_write_path)
 
-    EDGAR_DB.close_session()
+    edgar_db.close_session()
     return search_results
 
 
 @cli.command()
 def update_company_info():
     """Attempts to download information for all company CIKs without an associated ticker."""
-    EDGAR_DB.make_session()
 
-    to_update_ciks = EDGAR_DB.session.query(
-        distinct(CompanyInfo.company_cik)).filter(CompanyInfo.company_ticker == None).all()
+    edgar_db = EdgarDatabase()
+    edgar_db.make_session()
 
-    EDGAR_DB.close_session()
-    _update_company_info(to_update_ciks)
+    to_update_ciks = edgar_db.session.query(
+        distinct(CompanyInfo.company_cik)).filter(and_(
+        CompanyInfo.company_name.is_(None),
+        CompanyInfo.company_info_attempted.is_(False))).all()
+
+    _update_company_info(to_update_ciks, edgar_db)
+    edgar_db.close_session()
 
 
 @cli.command()
 def clear_parsed_files():
     """Deletes any downloaded Excel files that have been successfully parsed."""
-    EDGAR_DB.make_session()
+    edgar_db = EdgarDatabase()
+    edgar_db.make_session()
 
-    parsed_excel_paths = EDGAR_DB.session.query(
-        distinct(FilingInfo)).filter(FilingInfo.parsed_data == True).all()
+    parsed_excel_paths = edgar_db.session.query(
+        distinct(FilingInfo)).filter(FilingInfo.parsed_data.is_(True)).all()
 
     for parsed_excel in parsed_excel_paths:
-        os.remove(parsed_excel.excel_path)
+        try:
+            os.remove(parsed_excel.excel_path)
+        except FileNotFoundError:
+            pass
 
-    EDGAR_DB.close_session()
+        for c in edgar_db.session.query(FilingInfo).filter(
+                FilingInfo.excel_path.is_(parsed_excel.excel_path)).all():
+            c.excel_path = None
+
+    edgar_db.close_session()
 
     print(f'{len(parsed_excel_paths)} files deleted.')
 
 
-def _searcher(search_type, print_results=True):
+def _searcher(search_type, edgar_db, print_results=True):
     """Prints any downloaded filing information associated with companies within search scope."""
-    EDGAR_DB.make_session()
 
     if search_type == 'all':
-        search_results = EDGAR_DB.select_all_filings()
+        search_results = edgar_db.select_all_filings()
     else:
         search_term = click.prompt('Please enter search term')
 
         # each of these generates a set of cik numbers for companies that meet search criteria
         if search_type == 'sic':
-            ciks_to_parse = EDGAR_DB.select_ciks_by_sic(search_term)
+            ciks_to_parse = edgar_db.select_ciks_by_sic(search_term)
         elif search_type == 'state':
-            ciks_to_parse = EDGAR_DB.select_ciks_by_state(search_term)
+            ciks_to_parse = edgar_db.select_ciks_by_state(search_term)
         elif search_type == 'name':
-            ciks_to_parse = EDGAR_DB.select_ciks_by_name(search_term)
+            ciks_to_parse = edgar_db.select_ciks_by_name(search_term)
         elif search_type == 'cik':
-            ciks_to_parse = EDGAR_DB._select_distinct_ciks(CompanyInfo.company_cik, search_term)
+            ciks_to_parse = edgar_db._select_distinct_ciks(CompanyInfo.company_cik, search_term)
         else:
-            ciks_to_parse = EDGAR_DB.select_ciks_by_ticker(search_term)
+            ciks_to_parse = edgar_db.select_ciks_by_ticker(search_term)
 
         # for cik number matches get list of company-filing objects
-        search_results = EDGAR_DB.select_filings_by_ciks(ciks_to_parse)
+        search_results = edgar_db.select_filings_by_ciks(ciks_to_parse)
 
     if print_results:
         print('\nResults:\n')
@@ -339,8 +375,6 @@ def _searcher(search_type, print_results=True):
                   str(result.FilingInfo.filing_url), sep=' | ')
         print('\n')
         print('Filings:', len(search_results))
-
-    EDGAR_DB.close_session()
 
     return search_results
 
@@ -376,47 +410,63 @@ def _download_filings(year, month, print_data=True):
     return rss_data.entries
 
 
-def _download_xlsxs(filings):
+def _download_xlsxs(filings) -> list((str, FilingInfo.excel_url)):
     """
     Download XLSX files for a list of urls.
     """
-    EDGAR_DB.make_session()
 
-    for filing in filings:
-        time.sleep(.25)
+    path_update_list = []
+
+    if type(filings) != list:
+        filings = [filings]
+
+    for f in filings:
+        time.sleep(.2)
         try:
+
             # file name will be the cik plus accession numbers
-            write_path = normalize_file_path('xlsx_data/' + filing.FilingInfo.company_cik + '_' +
-                                             filing.FilingInfo.filing_accession + '.xlsx')
+            write_path = normalize_file_path('xlsx_data/' + f.FilingInfo.company_cik + '_' +
+                                             f.FilingInfo.filing_accession +
+                                             '.xlsx')
 
             if not write_path.exists():
-                filing_excel = rq.get(filing.FilingInfo.excel_url)
+                filing_excel = rq.get(f.FilingInfo.excel_url)
                 write_path.write_bytes(filing_excel.content)
 
-            EDGAR_DB.update_excel_path(str(write_path), filing.FilingInfo.excel_url)
+            path_update_list.append((str(write_path), f.FilingInfo.excel_url))
 
         except (FileNotFoundError, rq.Timeout, rq.ConnectionError, rq.ConnectTimeout):
-            print('Unsuccessful:', filing.FilingInfo.excel_url)
+            print('Unsuccessful:', f.FilingInfo.excel_url)
             continue
 
-    EDGAR_DB.close_session()
+    return path_update_list
 
 
 def _build_filing_dfs(file_path: str, re_search_terms: str) -> Union[None, List[pd.DataFrame]]:
+
     if not file_path:
         return None
 
     return_dfs = []
 
     if file_path.split(".")[-1] == 'xls' or 'xlsx':
-        excel = pd.ExcelFile(file_path)
+        try:
+            excel = pd.ExcelFile(file_path)
+        except (FileNotFoundError, XLRDError):
+            return None
 
         for sheet_name in excel.sheet_names:
             if re.search(re_search_terms, sheet_name, flags=re.IGNORECASE):
-                return_dfs.append(pd.read_excel(excel, sheet_name, header=None).dropna(how='all'))
+                return_dfs.append(excel.parse(sheet_name, header=None).dropna(how='all'))
+
+        excel.close()
 
     elif file_path.split(".")[-1] == 'csv':
-        df_csv = pd.read_csv(file_path, header=None).dropna(how='all')
+
+        try:
+            df_csv = pd.read_csv(file_path, header=None).dropna(how='all')
+        except (FileNotFoundError, XLRDError):
+            return None
 
         header_vals_list = [str(item) for item in flatten(df_csv.iloc[:5, :].values.tolist())]
         header_vals_string = ' '.join([str(val) for val in header_vals_list])
@@ -456,7 +506,8 @@ def _clean_data_file(df: pd.DataFrame, re_search_filing_type: str, re_search_per
     dropped_df = df.dropna(how='any', subset=df.columns[1:])
 
     cleaned_df = dropped_df.applymap(lambda x: str(x).replace('\n', ' ').replace("'", "").replace(":", "")
-                                     .replace('-', '').replace('*', '').replace('  ', ' ').replace('$', '').strip().title())
+                                     .replace('-', '').replace('*', '').replace('  ', ' ')
+                                     .replace('$', '').strip().title())
 
     for col in cleaned_df.columns[1:]:
         cleaned_df.loc[1:, col] = cleaned_df.loc[1:, col].apply(scale_array_val, args=(unit_multiplier,))
@@ -488,7 +539,8 @@ def _update_filings(rss_data, get_company_info):
     """
     print('\nUpdating filings...')
 
-    EDGAR_DB.make_session()
+    edgar_db = EdgarDatabase()
+    edgar_db.make_session()
 
     duplicates = 0
     company_ciks_to_download = []
@@ -507,14 +559,14 @@ def _update_filings(rss_data, get_company_info):
             except KeyError:
                 period = None
 
-            if EDGAR_DB.check_cik_exists(cik) is False:
+            if edgar_db.check_cik_exists(cik) is False:
                 company_ciks_to_download.append(cik)
 
             # if db search for filing returns a hit, skip writing that filing
-            if EDGAR_DB.check_accession_exists(accession) is True:
+            if edgar_db.check_accession_exists(accession) is True:
                 duplicates += 1
             else:
-                EDGAR_DB.insert_objects(FilingInfo(
+                edgar_db.insert_objects(FilingInfo(
                     company_cik=cik,
                     filing_accession=accession,
                     form=str(item['edgar_formtype']).strip(),
@@ -526,37 +578,41 @@ def _update_filings(rss_data, get_company_info):
                     excel_path=None,
                     parsed_data=False))
 
-    EDGAR_DB.close_session()
-
     # show user if we skipped writing any entries because they were already in database
     if duplicates > 0:
         print(f'{duplicates} duplicate entries skipped...')
 
     if len(company_ciks_to_download) > 0 and get_company_info:
-        _update_company_info(company_ciks_to_download)
+        _update_company_info(company_ciks_to_download, edgar_db)
+
+    edgar_db.close_session()
 
 
-def _update_company_info(company_ciks_to_download):
+def _update_company_info(company_ciks_to_download, edgar_db):
     """Attempt to download info about a given company's CIK"""
     print('\n')
     print('Updating company info...')
-
-    EDGAR_DB.make_session()
 
     print(f'Collecting info for {len(company_ciks_to_download)} companies...')
     company_download_pool = multiprocessing.Pool(processes=MULTIPROCESSING_NUMBER)
     info_to_insert = company_download_pool.map(_get_single_company_info, list(set(company_ciks_to_download)))
     company_download_pool.close()
 
-    EDGAR_DB.insert_objects(info_to_insert)
-    EDGAR_DB.close_session()
+    edgar_db.insert_objects(info_to_insert)
+
+    for c in edgar_db.session.query(CompanyInfo).filter(CompanyInfo.company_cik.in_(company_ciks_to_download)).all():
+        c.company_info_attempted = True
+
+    print('Done.')
+    print("\n")
 
 
 def _build_sic_table():
 
-    EDGAR_DB.make_session()
+    edgar_db = EdgarDatabase()
+    edgar_db.make_session()
 
-    if EDGAR_DB.session.query(func.count(SicInfo.sic_code)).first()[0] != 0:
+    if edgar_db.session.query(func.count(SicInfo.sic_code)).first()[0] != 0:
         return True
 
     sic_tables = bs4.BeautifulSoup(rq.get('https://www.sec.gov/info/edgar/siccodes.htm').content, 'html.parser')
@@ -566,9 +622,9 @@ def _build_sic_table():
     sic_df.columns = ['sic_code', 'ad_office', 'drop', 'industry_title']
     sic_df = sic_df.drop('drop', axis='columns')
 
-    sic_df.to_sql(DB_SIC_TABLE, EDGAR_DB._db_eng, if_exists='replace', index=False)
+    sic_df.to_sql(DB_SIC_TABLE, edgar_db.db_eng, if_exists='replace', index=False)
 
-    EDGAR_DB.close_session()  # need to use session logic to commit changes
+    edgar_db.close_session()  # need to use session logic to commit changes
 
 
 if __name__ == '__main__':
@@ -577,3 +633,5 @@ if __name__ == '__main__':
     # if using Windows pause at the end of the script so cmd doesn't automatically close
     if platform.system == 'Windows':
         click.pause()
+
+    print("\n")

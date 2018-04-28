@@ -64,17 +64,16 @@ def api_name_to_ticker(company_info: CompanyInfo) -> CompanyInfo:
 
     try:
         r = requests.get(url, params=params, auth=AUTH)
-    except (requests.ConnectTimeout, requests.ConnectionError):
-        return company_info
-
-    # try to return the ticker for first result in list of suggestions
-    try:
         company_info.company_ticker = r.json()['ResultSet']['Result'][0]['symbol']
         return company_info
+
     except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError):
+
         try:
             # try other api to see if we get a hit
             r2 = requests.get(f'http://chstocksearch.herokuapp.com/api/{company_info.company_name}')
-            return r2.json()[0]['symbol']
+            company_info.company_ticker = r2.json()[0]['symbol']
+            return company_info
+
         except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError):
             return company_info

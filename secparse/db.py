@@ -7,7 +7,6 @@ from sqlalchemy.sql import exists
 import datetime as dt
 import dateutil.parser
 import sys
-from typing import List
 
 from .config import *
 
@@ -30,6 +29,7 @@ class CompanyInfo(Base):
     company_ticker = Column(String)
     company_sic = Column(String, ForeignKey(SicInfo.sic_code))
     company_state = Column(String)
+    company_info_attempted = Column(Boolean)
 
 
 class FilingInfo(Base):
@@ -44,6 +44,7 @@ class FilingInfo(Base):
     excel_url = Column(String)
     excel_path = Column(String)
     parsed_data = Column(Boolean)
+    parsing_attempted = Column(Boolean)
 
     Index("FILING_CIK_IDX", "company_cik", "filing_accession")
 
@@ -60,10 +61,10 @@ class FilingData(Base):
 
 class EdgarDatabase(object):
     def __init__(self):
-        self._db_eng = create_engine(f'sqlite:///{DB_FILE_LOC}', echo=False)
+        self.db_eng = create_engine(f'sqlite:///{DB_FILE_LOC}', echo=False)
         self._sessionmaker = sessionmaker(autocommit=False)
-        self._sessionmaker.configure(bind=self._db_eng)
-        Base.metadata.create_all(self._db_eng)
+        self._sessionmaker.configure(bind=self.db_eng)
+        Base.metadata.create_all(self.db_eng)
 
     def make_session(self):
         """Removing from __init__ lets us instantiate an EdgarDatabase object at the module level, dynamically
@@ -100,9 +101,13 @@ class EdgarDatabase(object):
     def select_single_filing_data_(self, accession_num):
         return self.session.query(FilingData.filing_accession == accession_num).all()
 
-    def select_filings_by_ciks(self, cik_nums) -> List[FilingInfo]:
+    def select_filings_by_ciks(self, cik_nums):
         return self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).filter(
-            CompanyInfo.company_cik.in_(cik_nums)).all()
+            CompanyInfo.company_cik.in_(list(set(cik_nums)))).all()
+
+    def select_filings_by_accessions(self, accession_nums):
+        return self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).filter(
+            FilingInfo.filing_accession.in_(list(set(accession_nums)))).all()
 
     def select_all_distinct_ciks(self):
         return self.session.query(CompanyInfo.company_cik).all()

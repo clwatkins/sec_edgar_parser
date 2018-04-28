@@ -12,8 +12,7 @@ AUTH = requests_oauthlib.OAuth1(
 )
 
 # Parallelisation config
-MULTIPROCESSING_NUMBER = 35
-MULTITHREADING_NUMBER = 4
+MULTIPROCESSING_NUMBER = 50
 
 # Valid form types to try parsing -- changing not recommended
 VALID_FORMS = ['10-Q', '10-K', '10-Q/A', 'S-4', '8-K']

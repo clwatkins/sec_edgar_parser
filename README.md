@@ -2,6 +2,8 @@
 
 In the process of development.
 
+Requires Python 3.6 or higher.
+
 - Command-line tool to parse the [SEC's Edgar database](https://www.sec.gov/edgar/searchedgar/companysearch.html)
 - Aiming to facilitate ML-type analysis on large sets of accounting terms
 
@@ -18,5 +20,5 @@ In the process of development.
 - Run clear_parsed_files as a utility function to delete Excel documents that have been successfully parsed for their contents
 
 ## Current issues
-- Finish modifying availble search types to include SIC code / industry classification / company location
 - Parser only knows limited number of form types with relatively limited fault tolerance for non-standard filing formats
+- P&Ls are only parsed if cover a period of 12 months (so excludes quarterly filings) -- don't correct for time span

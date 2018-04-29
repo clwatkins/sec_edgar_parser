@@ -1,4 +1,6 @@
 import requests
+from ssl import SSLError
+from urllib3.exceptions import MaxRetryError
 import re
 import bs4
 import json
@@ -16,7 +18,10 @@ def api_get_cik(ticker: str) -> Optional[str]:
     url = 'http://www.sec.gov/cgi-bin/browse-edgar?CIK={}&Find=Search&owner=exclude&action=getcompany'
 
     # find regular expression pattern within page. If ticker contains a ., queries the base ticker
-    search_results = cik_re.findall(requests.get(url.format(ticker.split('.')[0])).text)
+    try:
+        search_results = cik_re.findall(requests.get(url.format(ticker.split('.')[0])).text)
+    except (ConnectionError, TimeoutError, SSLError, MaxRetryError):
+        return None
 
     if len(search_results):
         return search_results[0]
@@ -29,7 +34,10 @@ def api_cik_to_info(company_info: CompanyInfo) -> CompanyInfo:
 
     url = f'http://www.sec.gov/cgi-bin/browse-edgar?CIK={company_info.company_cik}&Find=Search&' \
           f'owner=exclude&action=getcompany'
-    sec_page = requests.get(url).text
+    try:
+        sec_page = requests.get(url).text
+    except (ConnectionError, TimeoutError, SSLError, MaxRetryError):
+        return company_info
 
     sec_page_parsed = bs4.BeautifulSoup(sec_page, 'html.parser')
 
@@ -67,7 +75,8 @@ def api_name_to_ticker(company_info: CompanyInfo) -> CompanyInfo:
         company_info.company_ticker = r.json()['ResultSet']['Result'][0]['symbol']
         return company_info
 
-    except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError):
+    except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError,
+            SSLError, MaxRetryError):
 
         try:
             # try other api to see if we get a hit
@@ -75,5 +84,6 @@ def api_name_to_ticker(company_info: CompanyInfo) -> CompanyInfo:
             company_info.company_ticker = r2.json()[0]['symbol']
             return company_info
 
-        except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError):
+        except (TypeError, IndexError, json.decoder.JSONDecodeError, KeyError, ConnectionError, TimeoutError,
+                SSLError, MaxRetryError):
             return company_info

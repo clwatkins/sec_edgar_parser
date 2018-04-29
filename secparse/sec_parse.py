@@ -9,6 +9,8 @@ from numpy import ndarray
 from sqlalchemy import distinct, func, and_
 import feedparser
 import requests as rq
+from ssl import SSLError
+from urllib3.exceptions import MaxRetryError
 from xlrd.biffh import XLRDError
 import bs4
 import pandas as pd
@@ -386,8 +388,12 @@ def _download_filings(year, month, print_data=True):
     edgar_url = ('http://www.sec.gov/Archives/edgar/monthly/xbrlrss-' + str(year).zfill(4) +
                  '-' + str(month).zfill(2) + '.xml')
 
-    # use feedparser rss xml parser to enable selection by tag
-    rss_data = feedparser.parse(edgar_url)
+    try:
+        # use feedparser rss xml parser to enable selection by tag
+        rss_data = feedparser.parse(edgar_url)
+    except (ConnectionError, TimeoutError, SSLError, MaxRetryError):
+        print("Can't connect.")
+        return None
 
     if print_data:
         print(rss_data['feed']['title'] + ':', '\n')
@@ -435,7 +441,7 @@ def _download_xlsxs(filings) -> list((str, FilingInfo.excel_url)):
 
             path_update_list.append((str(write_path), f.FilingInfo.excel_url))
 
-        except (FileNotFoundError, rq.Timeout, rq.ConnectionError, rq.ConnectTimeout):
+        except (FileNotFoundError, rq.Timeout, rq.ConnectionError, rq.ConnectTimeout, SSLError, MaxRetryError):
             print('Unsuccessful:', f.FilingInfo.excel_url)
             continue
 
@@ -615,7 +621,13 @@ def _build_sic_table():
     if edgar_db.session.query(func.count(SicInfo.sic_code)).first()[0] != 0:
         return True
 
-    sic_tables = bs4.BeautifulSoup(rq.get('https://www.sec.gov/info/edgar/siccodes.htm').content, 'html.parser')
+    try:
+        sic_tables = bs4.BeautifulSoup(rq.get('https://www.sec.gov/info/edgar/siccodes.htm').content, 'html.parser')
+    except (ConnectionError, TimeoutError, SSLError, MaxRetryError):
+        edgar_db.close_session()
+        print("Can't connect.")
+        sys.exit(0)
+
     sic_table_found = sic_tables.findAll('p')[1].findAll('table')[0]
 
     sic_df = pd.read_html(sic_table_found.encode(), header=0)[0]

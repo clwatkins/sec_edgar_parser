@@ -255,9 +255,8 @@ def parse_filings(search_type, csv=False):
     print('Successful sheet parses:', parsing_successes)
     print('Unsuccessful sheet parses:', len(parsing_errors))
 
-    for c in edgar_db.session.query(FilingInfo).filter(
-            FilingInfo.filing_url.in_([f.FilingInfo.filing_url for f in filings_to_parse])).all():
-        c.parsing_attempted = True
+    for c in edgar_db.select_filings_by_url([f.FilingInfo.filing_url for f in filings_to_parse]):
+        c.FilingInfo.parsing_attempted = True
 
     error_log_loc = normalize_file_path('unsuccessful_parses.txt')
 
@@ -303,8 +302,8 @@ def update_company_info():
 
     to_update_ciks = edgar_db.session.query(
         distinct(CompanyInfo.company_cik)).filter(and_(
-        CompanyInfo.company_name.is_(None),
-        CompanyInfo.company_info_attempted.is_(False))).all()
+            CompanyInfo.company_name.is_(None),
+            CompanyInfo.company_info_attempted.is_(False))).all()
 
     _update_company_info(to_update_ciks, edgar_db)
     edgar_db.close_session()
@@ -606,8 +605,8 @@ def _update_company_info(company_ciks_to_download, edgar_db):
 
     edgar_db.insert_objects(info_to_insert)
 
-    for c in edgar_db.session.query(CompanyInfo).filter(CompanyInfo.company_cik.in_(company_ciks_to_download)).all():
-        c.company_info_attempted = True
+    for c in edgar_db.select_filings_by_ciks(company_ciks_to_download):
+        c.CompanyInfo.company_info_attempted = True
 
     print('Done.')
     print("\n")

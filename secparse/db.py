@@ -9,6 +9,7 @@ import dateutil.parser
 import sys
 
 from .config import *
+from .utilities import flatten
 
 Base = declarative_base()
 
@@ -98,16 +99,32 @@ class EdgarDatabase(object):
     def select_all_filings(self):
         return self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).all()
 
-    def select_single_filing_data_(self, accession_num):
-        return self.session.query(FilingData.filing_accession == accession_num).all()
+    def _select_filings(self, query_col, query_terms):
+
+        if len(query_terms) < 999:  # sqlite query term limit
+            return self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).filter(
+                query_col.in_(query_terms)).all()
+
+        else:  # if length of parameters is longer than sqlite then chunk the request and compile return
+            query_return_list = list()
+            query_term_chunks = [query_terms[i:i + 995] for i in range(0, len(query_terms), 995)]
+
+            for query_term_chunk in query_term_chunks:
+                query_return_list.append(
+                    self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).filter(
+                        query_col.in_(query_term_chunk)).all()
+                )
+
+            return flatten(query_return_list)
 
     def select_filings_by_ciks(self, cik_nums):
-        return self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).filter(
-            CompanyInfo.company_cik.in_(list(set(cik_nums)))).all()
+        return self._select_filings(CompanyInfo.company_cik, cik_nums)
 
     def select_filings_by_accessions(self, accession_nums):
-        return self.session.query(FilingInfo, CompanyInfo).join(CompanyInfo).filter(
-            FilingInfo.filing_accession.in_(list(set(accession_nums)))).all()
+        return self._select_filings(FilingInfo.filing_accession, accession_nums)
+
+    def select_filings_by_url(self, filing_urls):
+        return self._select_filings(FilingInfo.filing_url, filing_urls)
 
     def select_all_distinct_ciks(self):
         return self.session.query(CompanyInfo.company_cik).all()
